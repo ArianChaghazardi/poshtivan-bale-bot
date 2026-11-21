@@ -3,6 +3,7 @@
 Poshtivan Bale Master Bot Server
 Centralized Two-Way Bot Service for WordPress Poshtivan Plugin
 Supports Single Official Bale Bot with Dynamic Multi-Site Pairing & Two-Way Replies
+Strict Markdown Formatting for Bale Messenger (Zero Raw HTML)
 
 Requirements:
     pip install aiohttp
@@ -61,6 +62,40 @@ def load_config() -> Dict[str, Any]:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
     return cfg
+
+def html_to_bale_markdown(text: str) -> str:
+    """
+    Converts HTML markup into standard Bale-compatible Markdown.
+    Bale does not support HTML tags and renders them as literal text.
+    """
+    if not text:
+        return ""
+    # Convert <br> and <p>
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"</p>", "\n\n", text, flags=re.IGNORECASE)
+
+    # Convert bold <b>, <strong> -> *text*
+    text = re.sub(r"<(?:b|strong)>(.*?)</(?:b|strong)>", r"*\1*", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Convert inline code <code> -> `code`
+    text = re.sub(r"<code>(.*?)</code>", r"`\1`", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Convert preformatted <pre> -> ```text```
+    text = re.sub(r"<pre>(.*?)</pre>", r"```\n\1\n```", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Convert italic <i>, <em> -> _text_
+    text = re.sub(r"<(?:i|em)>(.*?)</(?:i|em)>", r"_\1_", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Convert links <a href="url">text</a> -> [text](url)
+    text = re.sub(r"<a\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", r"[\2](\1)", text, flags=re.IGNORECASE | re.DOTALL)
+
+    # Strip any remaining tags
+    text = re.sub(r"<[^>]+>", "", text)
+
+    # Unescape HTML entities
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#039;", "'").replace("&nbsp;", " ")
+    return text.strip()
+
 
 class Database:
     def __init__(self, db_path: str):
@@ -216,10 +251,12 @@ class BaleMasterBot:
             return {"ok": False, "error": str(e)}
 
     async def send_message(self, chat_id: int, text: str, reply_markup: Any = None, reply_to_message_id: int = None) -> Optional[int]:
+        # Always enforce Markdown conversion for Bale Messenger
+        md_text = html_to_bale_markdown(text)
         payload = {
             "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML"
+            "text": md_text,
+            "parse_mode": "Markdown"
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
@@ -230,10 +267,10 @@ class BaleMasterBot:
         if res.get("ok"):
             return res.get("result", {}).get("message_id")
         else:
-            # Fallback without parse_mode if HTML parsing failed in Bale
-            logger.warning(f"sendMessage with HTML failed in Bale ({res}), retrying as plain text...")
-            clean_text = re.sub(r"<[^>]+>", "", text)
-            payload["text"] = clean_text
+            # Fallback without parse_mode if Markdown parsing failed in Bale
+            logger.warning(f"sendMessage with Markdown failed in Bale ({res}), retrying as plain text...")
+            plain_text = re.sub(r"[*_`]", "", md_text)
+            payload["text"] = plain_text
             payload.pop("parse_mode", None)
             res2 = await self.call_api("sendMessage", payload)
             if res2.get("ok"):
@@ -273,12 +310,12 @@ class BaleMasterBot:
             welcome_text = (
                 "سلام! به ربات رسمی پشتیوان در پیام رسان بله خوش آمدید. 🌟\n\n"
                 "از طریق این ربات می توانید تمامی پیام های چت آنلاین و تیکت های پشتیبانی وبسایت های خود را به صورت لحظه ای دریافت کنید و مستقیما با زدن گزینه پاسخ (Reply) به کاربران پاسخ دهید.\n\n"
-                "🔑 <b>نحوه اتصال به وبسایت شما:</b>\n"
-                "وارد پیشخوان وردپرس سایت خود شوید، به بخش <b>پشتیوان > تنظیمات > ربات ها > تب بله</b> بروید و کد اختصاصی وبسایت خود را (مثال: <code>PST-12345678</code>) کپی کرده و به همین ربات ارسال نمایید.\n\n"
+                "🔑 *نحوه اتصال به وبسایت شما:*\n"
+                "وارد پیشخوان وردپرس سایت خود شوید، به بخش *پشتیوان > تنظیمات > ربات ها > تب بله* بروید و کد اختصاصی وبسایت خود را (مثال: `PST-12345678`) کپی کرده و به همین ربات ارسال نمایید.\n\n"
                 "دستورات موجود:\n"
-                "▫️ <code>/connect کد_سایت</code> - اتصال سایت به اکانت شما\n"
-                "▫️ <code>/status</code> - مشاهده وضعیت سایت های متصل\n"
-                "▫️ <code>/help</code> - راهنمای کار با ربات"
+                "▫️ `/connect کد_سایت` - اتصال سایت به اکانت شما\n"
+                "▫️ `/status` - مشاهده وضعیت سایت های متصل\n"
+                "▫️ `/help` - راهنمای کار با ربات"
             )
             await self.send_message(chat_id, welcome_text)
             return
@@ -290,7 +327,7 @@ class BaleMasterBot:
                 token_candidate = parts[1].strip().upper()
                 await self._process_connect_token(chat_id, token_candidate, username, first_name)
             else:
-                await self.send_message(chat_id, "لطفا کد اتصال را به صورت <code>/connect PST-XXXXXXXX</code> وارد کنید.")
+                await self.send_message(chat_id, "لطفا کد اتصال را به صورت `/connect PST-XXXXXXXX` وارد کنید.")
             return
 
         # Case C: User sent a raw token PST-XXXXXXXX
@@ -310,15 +347,15 @@ class BaleMasterBot:
                 )
                 return
 
-            msg_lines = ["📋 <b>وبسایت های متصل به اکانت شما در بله:</b>\n"]
+            msg_lines = ["📋 *وبسایت های متصل به اکانت شما در بله:*\n"]
             for idx, c in enumerate(connections, 1):
                 s_name = c.get("site_name") or "وبسایت"
                 s_url = c.get("site_url") or "---"
                 t = c.get("token")
                 msg_lines.append(
-                    f"🌐 <b>{s_name}</b>\n"
+                    f"🌐 *{s_name}*\n"
                     f"🔗 آدرس: {s_url}\n"
-                    f"🔑 کد اتصال: <code>{t}</code>\n"
+                    f"🔑 کد اتصال: `{t}`\n"
                     f"❌ قطع اتصال: /disconnect_{t.replace('-', '_')}\n"
                 )
             await self.send_message(chat_id, "\n".join(msg_lines))
@@ -332,23 +369,23 @@ class BaleMasterBot:
                 token_to_disc = parts[1].strip().upper()
                 site = self.db.get_site(token_to_disc)
                 self.db.remove_connection(token_to_disc, chat_id)
-                await self.send_message(chat_id, f"✅ اتصال اکانت شما با سایت <code>{token_to_disc}</code> با موفقیت قطع شد.")
+                await self.send_message(chat_id, f"✅ اتصال اکانت شما با سایت `{token_to_disc}` با موفقیت قطع شد.")
 
                 # Notify WordPress of disconnection
                 if site:
                     asyncio.create_task(self._notify_wordpress_admin_disconnected(site, token_to_disc, chat_id))
             else:
-                await self.send_message(chat_id, "لطفا کد سایتی که قصد قطع اتصال آن را دارید وارد کنید:\n<code>/disconnect PST-XXXXXXXX</code>")
+                await self.send_message(chat_id, "لطفا کد سایتی که قصد قطع اتصال آن را دارید وارد کنید:\n`/disconnect PST-XXXXXXXX`")
             return
 
         # Case F: /help command
         if text.startswith("/help"):
             help_text = (
-                "📖 <b>راهنمای ربات بله پشتیوان:</b>\n\n"
+                "📖 *راهنمای ربات بله پشتیوان:*\n\n"
                 "۱. برای دریافت پیام های چت آنلاین، کد افزونه پشتیوان را از پیشخوان وردپرس سایت کپی کرده و به ربات ارسال نمایید.\n"
                 "۲. وقتی پیامی از مشتری ارسال می شود، اعلان آن همراه با نام و شماره کاربر در این ربات دریافت می گردد.\n"
-                "۳. جهت ارسال پاسخ به مشتری، کافیست روی همان پیام در بله گزینه <b>پاسخ (Reply)</b> را بزنید و پیام خود را بنویسید؛ پاسخ شما آنی در چت آنلاین برای کاربر نمایش داده می شود.\n"
-                "۴. دستور <code>/status</code> لیست کلیه وبسایت های متصل را به شما نشان می دهد."
+                "۳. جهت ارسال پاسخ به مشتری، کافیست روی همان پیام در بله گزینه *پاسخ (Reply)* را بزنید و پیام خود را بنویسید؛ پاسخ شما آنی در چت آنلاین برای کاربر نمایش داده می شود.\n"
+                "۴. دستور `/status` لیست کلیه وبسایت های متصل را به شما نشان می دهد."
             )
             await self.send_message(chat_id, help_text)
             return
@@ -374,12 +411,12 @@ class BaleMasterBot:
         # Unrecognized input
         await self.send_message(
             chat_id,
-            "پیام شما متوجه نشدم. برای اتصال وبسایت خود، کد اختصاصی سایت (مثل <code>PST-12345678</code>) را ارسال کنید یا دستور /help را بزنید."
+            "پیام شما متوجه نشدم. برای اتصال وبسایت خود، کد اختصاصی سایت (مثل `PST-12345678`) را ارسال کنید یا دستور /help را بزنید."
         )
 
     async def _process_connect_token(self, chat_id: int, token: str, username: str, first_name: str):
         if not re.match(r"^PST-[A-Z0-9]{8}$", token):
-            await self.send_message(chat_id, "❌ قالب کد وارد شده نامعتبر است. کد سایت باید به صورت <code>PST-XXXXXXXX</code> باشد.")
+            await self.send_message(chat_id, "❌ قالب کد وارد شده نامعتبر است. کد سایت باید به صورت `PST-XXXXXXXX` باشد.")
             return
 
         # Save connection in DB
@@ -387,10 +424,10 @@ class BaleMasterBot:
         site = self.db.get_site(token)
 
         success_text = (
-            "🎉 <b>تبریک! اتصال با موفقیت برقرار شد.</b>\n\n"
-            f"اکانت بله شما با موفقیت به وبسایت شما با کد اختصاصی <code>{token}</code> متصل گردید.\n\n"
+            "🎉 *تبریک! اتصال با موفقیت برقرار شد.*\n\n"
+            f"اکانت بله شما با موفقیت به وبسایت شما با کد اختصاصی `{token}` متصل گردید.\n\n"
             "🔔 از این پس تمامی پیام های جدید چت آنلاین و تیکت های مشتریان بلافاصله در همین ربات برای شما ارسال می گردد.\n"
-            "✍️ جهت پاسخگویی به هر مشتری، کافیست روی پیام مربوطه گزینه <b>Reply</b> را بزنید."
+            "✍️ جهت پاسخگویی به هر مشتری، کافیست روی پیام مربوطه گزینه *Reply* را بزنید."
         )
         await self.send_message(chat_id, success_text)
 
