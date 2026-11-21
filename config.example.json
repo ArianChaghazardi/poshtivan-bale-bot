@@ -1,0 +1,11 @@
+{
+    "bot_token": "YOUR_BALE_BOT_TOKEN_HERE",
+    "bot_username": "poshtivanbot",
+    "mode": "polling",
+    "webhook_url": "",
+    "api_host": "127.0.0.1",
+    "api_port": 8092,
+    "bale_api_url": "https://tapi.bale.ai",
+    "database_file": "bale_master.db",
+    "server_secret": ""
+}

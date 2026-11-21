@@ -1,0 +1,16 @@
+[Unit]
+Description=Poshtivan Bale Master Bot Service (@poshtivanbot)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/project/poshtivan-bale-bot
+ExecStart=/usr/bin/python3 /home/project/poshtivan-bale-bot/bot.py /home/project/poshtivan-bale-bot/config.json
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/project/poshtivan-bale-bot/bot.log
+StandardError=append:/home/project/poshtivan-bale-bot/bot.log
+
+[Install]
+WantedBy=multi-user.target
